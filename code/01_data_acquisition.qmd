@@ -1,0 +1,160 @@
+---
+title: "SOW 1 - Data Acquisition"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+execute:
+  message: false
+  warning: false
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+# Overview
+
+# Data Sources
+
+1.  Census
+
+    -   PUMS
+    -   ACS
+    -   Census Bureau LODES data
+        -   is this at county level
+        -   is at state level
+
+2.  [EEOC](https://www.eeoc.gov/)
+
+    -   Abbas hasn't found this available in R yet
+    -   
+
+3.  Bureau of Labor Statistics (BLS)
+
+    -   blsAPI (Google these)
+
+    -   blsrapeR
+
+## Load packages
+
+```{r}
+#| message: false
+library(tidycensus)
+library(tidyverse)
+library(shiny)
+```
+
+Here we will extract the variables of interest. Those variables include:
+
+1.  Age
+
+2.  Income
+
+3.  Race
+
+4.  Sex
+
+```{r}
+vars_2021 <- load_variables(year="2021", dataset="acs5")
+
+vars_2021 |> 
+  filter(str_detect(label, "Household income")) |> 
+  slice(1:5) |>
+  pull(label)
+  
+```
+
+For the our first pass, let's see if we can look at NY, specifically Monroe County.
+
+```{r}
+ny_pop <- get_acs(geography = "county", 
+                     variables = "B01003_001", 
+                     state = "NY",
+                     geometry = TRUE) 
+
+ny_pop 
+```
+
+Population
+
+```{r}
+library(leaflet)
+library(stringr)
+library(sf)
+
+pal <- colorQuantile(palette = "viridis", domain = ny_pop$estimate, n = 10)
+
+ny_pop %>%
+    st_transform(crs = "+init=epsg:4326") %>%
+    leaflet(width = "100%") %>%
+    addProviderTiles(provider = "CartoDB.Positron") %>%
+    addPolygons(popup = ~ str_extract(NAME, "^([^,]*)"),
+                stroke = FALSE,
+                smoothFactor = 0,
+                fillOpacity = 0.7,
+                color = ~ pal(estimate)) %>%
+    addLegend("bottomright", 
+              pal = pal, 
+              values = ~ estimate,
+              title = "Population percentiles",
+              opacity = 1)
+```
+
+Median home value
+
+```{r}
+
+
+median_home_map <- function(county){
+  roc_ny_value <- get_acs(geography = "tract", 
+                    variables = "B25077_001", 
+                    state = "NY",
+                    county = county,
+                    geometry = TRUE)
+
+pal <- colorNumeric(palette = "viridis", 
+                    domain = roc_ny_value$estimate)
+
+roc_ny_value %>%
+    st_transform(crs = "+init=epsg:4326") %>%
+    leaflet(width = "100%") %>%
+    addProviderTiles(provider = "CartoDB.Positron") %>%
+    addPolygons(popup = ~ str_extract(NAME, "^([^,]*)"),
+                stroke = FALSE,
+                smoothFactor = 0,
+                fillOpacity = 0.4,
+                color = ~ pal(estimate)) %>%
+    addLegend("bottomright", 
+              pal = pal, 
+              values = ~ estimate,
+              title = "Median Home Value",
+              labFormat = labelFormat(prefix = "$"),
+              opacity = 1)
+}
+
+
+median_home_map("Erie County")
+
+```
+
+```{r}
+# need to look at PUMS vars
+
+pums_vars_2018 <- pums_variables |>
+  filter(year == 2018, survey == "acs1")
+
+ny_pums_recoded <- get_pums(
+  variables = c("PUMA", "SEX", "AGEP", "SCHL", "CIT"),
+  state = "NY",
+  survey = "acs1",
+  year = 2018,
+  recode = TRUE
+  )
+```
+
+Next steps:
+
+-   Write functions that enable shiny inputs
+
+-   PUMS

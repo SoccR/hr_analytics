@@ -43,6 +43,8 @@ editor_options:
 library(tidycensus)
 library(tidyverse)
 library(shiny)
+library(shinydashboard)
+
 ```
 
 Here we will extract the variables of interest. Those variables include:
@@ -73,7 +75,17 @@ ny_pop <- get_acs(geography = "county",
                      state = "NY",
                      geometry = TRUE) 
 
-ny_pop 
+#ny_pop
+
+
+ny_pop |>
+  mutate(NAME = str_remove(NAME, "County, New York")) |>
+  ggplot(aes(reorder(NAME, estimate), estimate, fill = NAME)) +
+  geom_col(show.legend=FALSE) +
+  coord_flip() +
+  theme(legend.position = "none") +
+  theme_minimal()
+
 ```
 
 Population
@@ -106,35 +118,9 @@ Median home value
 ```{r}
 
 
-median_home_map <- function(county){
-  roc_ny_value <- get_acs(geography = "tract", 
-                    variables = "B25077_001", 
-                    state = "NY",
-                    county = county,
-                    geometry = TRUE)
-
-pal <- colorNumeric(palette = "viridis", 
-                    domain = roc_ny_value$estimate)
-
-roc_ny_value %>%
-    st_transform(crs = "+init=epsg:4326") %>%
-    leaflet(width = "100%") %>%
-    addProviderTiles(provider = "CartoDB.Positron") %>%
-    addPolygons(popup = ~ str_extract(NAME, "^([^,]*)"),
-                stroke = FALSE,
-                smoothFactor = 0,
-                fillOpacity = 0.4,
-                color = ~ pal(estimate)) %>%
-    addLegend("bottomright", 
-              pal = pal, 
-              values = ~ estimate,
-              title = "Median Home Value",
-              labFormat = labelFormat(prefix = "$"),
-              opacity = 1)
-}
 
 
-median_home_map("Erie County")
+median_home_map("Monroe County")
 
 ```
 
@@ -158,3 +144,144 @@ Next steps:
 -   Write functions that enable shiny inputs
 
 -   PUMS
+
+-   Example for Counties in NY
+
+```{r}
+library(datasets)
+states <- state.abb
+
+
+
+remove_state_from_county_name <- function(state_objects, remove_state){
+  sort(str_remove(state_objects$NAME, remove_state))
+}
+
+
+
+get_data_element <- function(state, county, code){
+    get_acs(
+    geography = "tract",
+    variables = code,
+    state = state,
+    county = county,
+    geometry = TRUE
+  )
+}
+
+
+
+get_states <- function(state_abbreviation){
+  get_acs(geography = "county", 
+                     variables = "B01003_001", 
+                     state = state_abbreviation,
+                     geometry = TRUE) 
+}
+
+
+get_counties <- function(states_objects){
+  state_name_to_remove <- unique(str_extract(states_objects$NAME, ",.*"))
+  county_names <- remove_state_from_county_name(states_objects, state_name_to_remove)
+  return(county_names)
+}
+
+
+median_home_value_code <- "B25077_001"
+
+# make a code and title data frame 
+
+
+
+median_home_map <- function(state, county, code) {
+  
+  
+  
+  median_home_values <- get_data_element(state, county, code)
+  pal <- colorNumeric(palette = "viridis",
+                      domain = median_home_values$estimate)
+  
+  median_home_values %>%
+    st_transform(crs = "+init=epsg:4326") %>%
+    leaflet(width = "100%") %>%
+    addProviderTiles(provider = "CartoDB.Positron") %>%
+    addPolygons(
+      popup = ~ str_extract(NAME, "^([^,]*)"),
+      stroke = FALSE,
+      smoothFactor = 0,
+      fillOpacity = 0.4,
+      color = ~ pal(estimate)
+    ) %>%
+    addLegend(
+      "bottomright",
+      pal = pal,
+      values = ~ estimate,
+      title = "Median Home Value",
+      labFormat = labelFormat(prefix = "$"),
+      opacity = 1
+    )
+}
+
+get_state_df <- function(state){
+  df <- get_states(state) |>
+  select(NAME) |>
+  separate(NAME, c("County", "State"), sep=",") |>
+  mutate(State=str_squish(State)) 
+  return(df)
+}
+
+state_counties <- states |> 
+  map_dfr(get_state_df) 
+
+state_counties <- state_counties |>
+  st_drop_geometry() |>
+  tibble() |>
+  arrange(State, County)
+
+state_counties
+
+
+ui <-  dashboardPage(
+  dashboardHeader(title = "CensusScope"),
+  dashboardSidebar(
+    selectInput("state", "Select State", choices = unique(state_counties$State)),
+    selectInput("county", "Select County", choices = NULL),
+    textInput("code", "Enter Code", value = "B25077_001"),
+    actionButton("update", "Update Map")  # Action button to trigger the update
+    # Rest of the UI
+  ),
+  dashboardBody(
+    tabsetPanel(
+      id = "tabs", type = "tabs",  # Ensure the tabs are at the top
+      tabPanel("Home Value", leafletOutput("mymap")),
+      tabPanel("Another Tab", "Content for another tab"),
+      # Add more tabs as needed
+    )
+  ),
+  skin = "black"
+)
+
+# Define the server logic
+server <- function(input, output, session) {
+  # Reactive expression to filter counties based on selected state
+  filtered_counties <- reactive({
+    state_counties %>%
+      filter(State == input$state) %>%
+      `$`('County')
+  })
+
+  # Observe changes in the selected state and update county dropdown
+  observeEvent(input$state, {
+    updateSelectInput(session, "county", choices = filtered_counties())
+  })
+
+  # Rest of your server logic for rendering the map
+  output$mymap <- renderLeaflet({
+    # Your code for rendering the map based on selected state and county
+    median_home_map(input$state, input$county, input$code)
+  })
+}
+
+# Create a Shiny app object
+app <- shinyApp(ui, server)
+runApp(app, display.mode = "normal")
+```
